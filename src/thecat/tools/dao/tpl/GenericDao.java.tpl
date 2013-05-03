@@ -3,7 +3,7 @@ package ${packageName};
 import java.io.Serializable;
 import java.util.List;
 
-public interface GenericDao<T, PK extends Serializable> {
+public interface GenericDao<T extends GenericPK<PK>, PK extends Serializable> {
 
 	List<T> findAll();
 	List<T> findAllOrderBy(String orderBy);

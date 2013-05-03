@@ -3,43 +3,32 @@ package ${packageName};
 import java.io.Serializable;
 import java.util.List;
 
-import org.hibernate.Criteria;
-import org.hibernate.HibernateException;
-import org.hibernate.Query;
-import org.hibernate.criterion.Order;
+import org.apache.ibatis.session.RowBounds;
 
-public class GenericDaoImpl<T, PK extends Serializable> extends Dao implements GenericDao<T, PK> {
+import ${packageName}.mapper.GenericMapper;
+
+public class GenericDaoImpl<T extends GenericPK<PK>, PK extends Serializable> extends Dao implements GenericDao<T, PK> {
 
 	private Class<T> persistentClass;
+	private Class<T> mapperClass;
 	
-	public GenericDaoImpl(final Class<T> persistentClass) {
+	public GenericDaoImpl(final Class<T> persistentClass, final Class mapperClass) {
 		this.persistentClass = persistentClass;
+		this.mapperClass = mapperClass;
 	}
 	
 	@SuppressWarnings("unchecked")
 	private List<T> findAll(String orderBy, Boolean desc, int startRow, int pageSize) {
 		List<T> entityList = null;
 		try {
-			begin();
-			Criteria criteria = getSession().createCriteria(persistentClass);
-			
-			if (startRow != -1) { criteria.setFirstResult(startRow); }
-			if (pageSize != -1) { criteria.setMaxResults(pageSize); } 
-			
-			if (orderBy != null) {
-				if (desc != null && desc) {
-					criteria.addOrder(Order.desc(orderBy));
-				} else {
-					criteria.addOrder(Order.asc(orderBy));
-				}
+			GenericMapper<T, PK> mapper = (GenericMapper<T, PK>) getSession().getMapper(mapperClass);
+			if (startRow != -1 && pageSize != -1) {
+				RowBounds rowBounds = new RowBounds(startRow, pageSize);
+				entityList = mapper.findAll(orderBy, desc, rowBounds);
+			} else {
+				entityList = mapper.findAll(orderBy, desc);
 			}
-			
-			criteria.setResultTransformer(Criteria.DISTINCT_ROOT_ENTITY);
-			entityList = criteria.list();
-			
-			commit();
-		} catch (HibernateException e) {
-			rollback();
+		} catch (Exception e) {
 			throw new RuntimeException("Could not find the entity " + persistentClass.getSimpleName(), e);
 		} finally {
 			close();
@@ -101,9 +90,8 @@ public class GenericDaoImpl<T, PK extends Serializable> extends Dao implements G
 			throw new IllegalArgumentException("The id parameter cannot be null");
 		}
 		
-		begin();
-		T entityFound = (T) getSession().get(persistentClass, id);
-		commit();
+		GenericMapper<T, PK> mapper = (GenericMapper<T, PK>) getSession().getMapper(mapperClass);
+		T entityFound = mapper.findById(id);
 		
 		return entityFound;
 	}
@@ -113,14 +101,10 @@ public class GenericDaoImpl<T, PK extends Serializable> extends Dao implements G
 		int rowCount = 0;
 		
 		try {
-			begin();
-			
-			Query query = getSession().createQuery("select count(*) from " + persistentClass.getSimpleName());
-			rowCount = ((Long) query.uniqueResult()).intValue();
+			GenericMapper<T, PK> mapper = (GenericMapper<T, PK>) getSession().getMapper(mapperClass);
 
-			commit();
-		} catch (HibernateException e) {
-			rollback();
+			rowCount = mapper.countAll();
+		} catch (Exception e) {
 			throw new RuntimeException("Could not count entities " + persistentClass.getSimpleName(), e);
 		} finally {
 			close();
@@ -139,10 +123,18 @@ public class GenericDaoImpl<T, PK extends Serializable> extends Dao implements G
 		}
 		
 		try {
-			begin();
-				result = (T) getSession().save(entity);
+			result = entity;
+			
+			GenericMapper<T, PK> mapper = (GenericMapper<T, PK>) getSession().getMapper(mapperClass);
+<#if useDb == 'mysql' >
+			mapper.insert(entity);
+</#if>
+<#if useDb == 'postgres' >
+			PK id = mapper.insert(entity);
+			result.setId(id);
+</#if>	
 			commit();
-		} catch (HibernateException ex) {
+		} catch (Exception ex) {
 			rollback();
 			throw new RuntimeException("Could not create the entity", ex);
 		} finally {
@@ -159,10 +151,10 @@ public class GenericDaoImpl<T, PK extends Serializable> extends Dao implements G
 		}
 		
 		try {
-			begin();
-				getSession().update(entity);
+			GenericMapper<T, PK> mapper = (GenericMapper<T, PK>) getSession().getMapper(mapperClass);
+			mapper.update(entity);
 			commit();
-		} catch (HibernateException ex) {
+		} catch (Exception ex) {
 			rollback();
 			throw new RuntimeException("Could not update the entity", ex);
 		} finally {
@@ -177,10 +169,12 @@ public class GenericDaoImpl<T, PK extends Serializable> extends Dao implements G
 		}
 		
 		try {
-			begin();
-				getSession().delete(entity);
+			GenericMapper<T, PK> mapper = (GenericMapper<T, PK>) getSession().getMapper(mapperClass);
+			if (mapper.delete(entity) == 0) {
+				throw new RuntimeException("no row deleted");
+			}
 			commit();
-		} catch (HibernateException ex) {
+		} catch (Exception ex) {
 			rollback();
 			throw new RuntimeException("Could not delete the entity", ex);
 		} finally {

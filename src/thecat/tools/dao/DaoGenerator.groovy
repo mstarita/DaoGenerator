@@ -6,13 +6,16 @@ import org.codehaus.groovy.gfreemarker.FreeMarkerTemplateEngine
 import org.apache.commons.lang.ClassUtils
 import org.apache.commons.lang.StringUtils
 import org.apache.commons.lang.reflect.MethodUtils;
+import org.apache.commons.io.FileUtils
+import org.apache.commons.io.FilenameUtils
 
 def keyValueArgs = args.collect { def token = it.split('='); [key: token[0], value: token.length > 1 ? token[1] : null] }
 
 keyValueArgs.findAll { it.key in [
-	'-generate-dao-base-classes', '-osiv-dao', '-spring-dao', '-with-session', 
+	'-generate-dao-base-classes', '-osiv-dao', '-spring-dao', 
 	'-generate-spring-cfg', '-generate-ehcache-cfg', '-use-ehcache',
-	'-generate-osiv-filter', '-generate-hibernate-cfg', '-include-super-fields'] }.each { it.value = true }
+	'-generate-osiv-filter', '-generate-orm-cfg', '-include-super-fields', 
+	'-verbose'] }.each { it.value = true }
 
 // check input parameters
 if (	(keyValueArgs.size() < 1) ||
@@ -30,12 +33,15 @@ def osivDao = keyValueArgs.find { it.key == '-osiv-dao'}?.value
 def springDao = keyValueArgs.find { it.key == '-spring-dao'}?.value
 def useEhcache = keyValueArgs.find { it.key == '-use-ehcache'}?.value ?: false
 def generateOsivFilter = keyValueArgs.find { it.key == '-generate-osiv-filter'}?.value
-def generateHibernateCfg = keyValueArgs.find { it.key == '-generate-hibernate-cfg'}?.value
+def generateOrmCfg = keyValueArgs.find { it.key == '-generate-orm-cfg'}?.value
 def generateSpringCfg = keyValueArgs.find { it.key == '-generate-spring-cfg'}?.value
 def generateEhcacheCfg = keyValueArgs.find { it.key == '-generate-ehcache-cfg'}?.value
-def withSession = keyValueArgs.find { it.key == '-with-session'}?.value ?: false
 def includeSuperFields = keyValueArgs.find { it.key == '-include-super-fields'}?.value ?: false
+def useOrm =  keyValueArgs.find { it.key == '-use-orm'}?.value ?: 'hibernate'
+def useDb =  keyValueArgs.find { it.key == '-use-db'}?.value ?: 'mysql'
+def verboseOutput   = keyValueArgs.find { it.key == '-verbose'}?.value
 def key = null
+
 
 try {
 	if (keyField) {
@@ -74,21 +80,25 @@ try {
 }
 
 def binding = ['packageName': outputPackage, 'className': classForDao.simpleName , 'fqClassName': fqClassName, 
+			   'entityName': StringUtils.uncapitalize(classForDao.simpleName),
                'fieldList': [], 'importList': [], 
 			   'keyField': key.fieldName, 'keyFieldType': key.fieldType, 
-			   'withSession': withSession, 'useEhcache': useEhcache,
-               'isAbstract': Modifier.isAbstract(classForDao.modifiers)]
+			   'useEhcache': useEhcache,
+               'isAbstract': Modifier.isAbstract(classForDao.modifiers),
+			   'implementation': '', 'useDb': useDb]
 
 // collect the fields name and type of classForDao
-getFields(classForDao, keyValueArgs).each { binding.fieldList.add(it) }
+getFields(classForDao, keyValueArgs, fqClassName).each { binding.fieldList.add(it) }
 def declaredGetMethods = classForDao.getDeclaredMethods().findAll {
 	it.name.startsWith("get")
 }
 
+println binding.fieldList
+
 // collect if required super fields when != java.lang.Object
 if (includeSuperFields && (superClassForDao.canonicalName != 'java.lang.Object')) {
 	def currentFieldsName = binding.fieldList.collect { it.fieldName }.flatten()
-	def fields = getFields(superClassForDao, keyValueArgs)
+	def fields = getFields(superClassForDao, keyValueArgs, fqClassName)
 	fields.findAll { ! (it.fieldName in currentFieldsName) }.each {
 		binding.fieldList.add(it)
 	}
@@ -125,62 +135,109 @@ types.sort().unique().findAll { !it.startsWith('java.lang.') && it != 'java.util
 //println "field list: ${binding.fieldList}"
 //println "importList: ${binding.importList}"
 
-showRunInfo(outputPackage, classForDao, superClassForDao, includeSuperFields, key.fieldName, binding.isAbstract, binding.fieldList, osivDao)
-
-def engine = new FreeMarkerTemplateEngine('')
-
-// generate dao interface
-generateClass('tpl/entityDao.tpl', "${binding.className}Dao.java", binding)
-
-// generate hibernate cfg
-if (generateHibernateCfg) {
-	generateClass('tpl/hibernate.cfg.xml.tpl', 'hibernate.cfg.xml', binding)
-}
-
-// generate spring cfg
-if (generateSpringCfg) {
-	generateClass('tpl/applicationContext.xml.tpl', 'applicationContext.xml', binding)
-}
-
-// generate ehcache cfg
-if (generateEhcacheCfg) {
-	generateClass('tpl/ehcache.xml.tpl', 'ehcache.xml', binding)
-}
-
-// generate dao class
-def sourceDaoImplTplFile = null
-def destDaoImplJavaFile = null
+// setup interface implementation type
 if (osivDao) {
-	sourceDaoImplTplFile = 'tpl/entityDaoOsivImpl.tpl'
-	destDaoImplJavaFile = "${binding.className}DaoOsivImpl.java"
+	binding.implementation = 'Osiv'
 } else if (springDao) {
-	sourceDaoImplTplFile = 'tpl/entityDaoSpringImpl.tpl'
-	destDaoImplJavaFile = "${binding.className}DaoSpringImpl.java"
-} else {
-	sourceDaoImplTplFile = 'tpl/entityDaoImpl.tpl'
-	destDaoImplJavaFile = "${binding.className}DaoImpl.java"
+	binding.implementation = 'Spring'
 }
 
-generateClass(sourceDaoImplTplFile, destDaoImplJavaFile, binding)
+def files4config = [
+	'hibernate' : [
+		'baseDao': [
+			inputDir: 'tpl', outputDir: "src/${binding.packageName.replaceAll('[.]', '/')}",
+			files: [
+				'hibernate/Dao.java.tpl', 'GenericDao.java.tpl', 'GenericPK.java.tpl',
+				'GenericDaoExt.java.tpl', "hibernate/GenericDao${binding['implementation']}Impl.java.tpl"]],
+		'entityDao': [
+			inputDir: 'tpl', outputDir: "src/${binding.packageName.replaceAll('[.]', '/')}",
+			files: ['${className}Dao.java.tpl', "hibernate/\${className}Dao${binding['implementation']}Impl.java.tpl"]],
+		'config':  [
+			inputDir: 'tpl/hibernate', outputDir: 'cfg',
+			files: [
+				(generateOrmCfg 		? 'hibernate.cfg.xml.tpl' : ''),
+				(generateSpringCfg 		? 'applicationContext.xml.tpl' : ''),
+				(generateEhcacheCfg 	? 'ehcache.xml.tpl' : '')]], 
+		'java-util': [ 
+			inputDir: 'tpl/hibernate', outputDir: "src/${binding.packageName.replaceAll('[.]', '/')}",
+			files: [(generateOsivFilter 	? 'HibernateOsivFilter.java.tpl' : '') ]], ],
+	'mybatis' : [
+		'baseDao': [
+			inputDir: 'tpl', outputDir: "src/${binding.packageName.replaceAll('[.]', '/')}",
+			files: [
+				'mybatis/Dao.java.tpl', 'GenericDao.java.tpl', 'GenericPK.java.tpl',
+				'GenericDaoExt.java.tpl', "mybatis/GenericDao${binding['implementation']}Impl.java.tpl"]],
+		'mapper': [
+			inputDir: 'tpl/mybatis', outputDir: "src/${binding.packageName.replaceAll('[.]', '/')}/mapper",
+			files: [
+				'GenericMapper.java.tpl', '${className}Mapper.java.tpl',
+				"\${className}Mapper-${binding.useDb}.xml.tpl"]],
+		'entityDao': [
+			inputDir: 'tpl', outputDir: "src/${binding.packageName.replaceAll('[.]', '/')}",
+			files: ['${className}Dao.java.tpl', "mybatis/\${className}Dao${binding['implementation']}Impl.java.tpl"]],
+		'config':  [
+			inputDir: 'tpl/mybatis', outputDir: 'cfg',
+			files: [
+				(generateOrmCfg 		? 'mybatis.xml.tpl' : ''),
+				(generateSpringCfg 		? 'applicationContext.xml.tpl' : ''),
+				(generateEhcacheCfg 	? 'ehcache.xml.tpl' : '')]], 
+		'java-util': [ 
+			inputDir: 'tpl/mybatis', outputDir: "src/${binding.packageName.replaceAll('[.]', '/')}",
+			files: [(generateOsivFilter 	? 'MyBatisOsivFilter.java.tpl' : '') ]] ]]
 
-// generate dao base classes
-if (generateDaoBaseClass) {
-	generateClass('tpl/dao.tpl',            'Dao.java', binding)
-	generateClass('tpl/genericDao.tpl',     'GenericDao.java', binding)
-	if (osivDao) {
-		generateClass('tpl/genericDaoOsivImpl.tpl', 'GenericDaoOsivImpl.java', binding)
-	} else if (springDao) {
-		generateClass('tpl/genericDaoSpringImpl.tpl', 'GenericDaoSpringImpl.java', binding)
-	} else {
-		generateClass('tpl/genericDaoImpl.tpl', 'GenericDaoImpl.java', binding)
+
+showRunInfo(
+	outputPackage, classForDao, superClassForDao, 
+	includeSuperFields, key.fieldName, 
+	binding.isAbstract, binding.fieldList, 
+	osivDao, useOrm, verboseOutput)
+
+// setup config files
+def files = null
+files4config.each { config ->
+	config.key.split(',').each {
+		if (it == useOrm) {
+			files = config.value
+		}
 	}
-	generateClass('tpl/genericDaoExt.tpl',  'GenericDaoExt.java', binding)
 }
 
-//generate hibernate osiv filter
-if (generateOsivFilter) {
-	generateClass('tpl/hibernateOsivFilter.tpl', 'HibernateOsivFilter.java', binding)
+if (!files) {
+	println "Cannot find the specified ${useOrm} orm technology!!!"
+	System.exit 0
 }
+
+files.each { section ->
+	def inputDir = section.value.inputDir
+	def baseOutputDir = "output-${useOrm}"
+	def outputDir = section.value.outputDir
+
+	// TODO check for file count excluding the empty entries before makedir	
+	FileUtils.forceMkdir(new File("${baseOutputDir}/${outputDir}"))
+	
+	section.value.files.each { file ->
+		if (!file.isEmpty()) {
+			def fileEx = freemark(file, binding)
+			def fileNameEx = FilenameUtils.getName(fileEx)
+			def inputFile = "${inputDir}/${file}"
+			def outputFile = freemark(fileNameEx, binding)
+		
+			if (inputFile.endsWith('.tpl')) {
+				def outputFileNoTpl = FilenameUtils.removeExtension(outputFile)
+				if (verboseOutput) println "\t\t${inputFile} --> ${baseOutputDir}/${outputDir}/${outputFileNoTpl}"
+				
+				freemark("${inputFile}", "${baseOutputDir}/${outputDir}/${outputFileNoTpl}", binding)
+			} else {
+				if (verboseOutput) println "\t\t${inputFile} --> ${baseOutputDir}/${outputDir}/${outputFile}"
+				
+				FileUtils.copyURLToFile getClass().getResource(inputFile),
+					new File("${baseOutputDir}/${outputDir}/${outputFile}")
+			}
+		}
+	}
+}
+
+println "That's all Folks!!!"
 
 def calculateDaoPackage(fqClassName) {
 	def splittedPackage = []
@@ -216,7 +273,7 @@ def findIdUsingAnnotation(fqClassName) {
 
 }
 
-// TODO watch-out for generics for type seek
+// TODO watch-out for generics types
 def findIdUsingPredicate(fqClassName, predicate) {
 	def clazz = Class.forName(fqClassName)
 	def idField = null
@@ -255,7 +312,13 @@ def findIdUsingPredicate(fqClassName, predicate) {
 	idField
 }
 
-def generateClass(templateName, outputClassName, binding) {
+def freemark(inputString, binding) {
+	def engine = new FreeMarkerTemplateEngine('')
+	
+	return (String) engine.createTemplate(inputString).make(binding)
+}
+
+def freemark(templateName, outputClassName, binding) {
 	def engine = new FreeMarkerTemplateEngine('')
 	
 	def templateUrl = getClass().getResource(templateName);
@@ -282,44 +345,71 @@ def getType(type) {
 	}
 }
 
-def getFields(clazz, keyValueArgs) {
+def getFields(clazz, keyValueArgs, fqClassName) {
 	def fields = []
-	
+		
 	def declaredGetMethods = clazz.getDeclaredMethods().findAll {
 		it.name.startsWith("get") && ! it.annotations.find { annotation -> annotation.annotationType().name == 'javax.persistence.Transient' }
 	}.each {
 		def returnType = getType(it)
 		def typeAsString = ClassUtils.getShortCanonicalName(returnType.type)
+		def fqTypeAsString = ClassUtils.getCanonicalName(returnType.type)
+		def subType = null
+		def isSubType = false
 		if (returnType.generic != null) {
 			typeAsString += "<" +
 				returnType.generic.collect {
 					ClassUtils.getShortCanonicalName(it.type)
 				}.join(', ') + ">"
-		}
+			fqTypeAsString += "<" +
+			returnType.generic.collect {
+				ClassUtils.getCanonicalName(it.type)
+			}.join(', ') + ">"
 		
-		// check for id name/type for generic type (ex. List, Set)
-		def field = null
-		if ((returnType.generic != null) && (returnType.generic.size() == 1)) {
-			def genericType = Class.forName(returnType.generic.head().type)
-			
-			// check for @Id annotation
-			field = findAnnotatedField(genericType, 'javax.persistence.Id')
-			
-			// check for id name/type entity params
-			if (field == null) {
-				field = findIdFromParams(ClassUtils.getShortCanonicalName(genericType), keyValueArgs)
-			}
-			
-			// this is the default id name/type configuration
-			if (field == null) {
-				field = [name: 'id', type: 'Long']
-			}
-		}
-		
-		if (field) {
-			fields.add([fieldName: "${StringUtils.uncapitalize(it.name.substring(3))}", fieldType: "${typeAsString}", fieldId: [fieldName: field?.name, fieldType: field?.type]])
+			subType = ClassUtils.getCanonicalName(returnType.generic[0].type)
+			isSubType = ClassUtils.getCanonicalName(subType).startsWith('java.lang.') ? false : true
 		} else {
-			fields.add([fieldName: "${StringUtils.uncapitalize(it.name.substring(3))}", fieldType: "${typeAsString}"])
+			if (!fqTypeAsString.startsWith('java.lang')) {
+				subType = fqTypeAsString
+				isSubType = true
+			}
+		}	
+			
+		println "field: ${clazz} - ${it.name.substring(3)}, isSubType: ${isSubType}, subType: ${subType}"
+
+		if (subType != fqClassName) {			
+		
+			// check id name/type for generic attribute (ex. List, Set)
+			def field = null
+			if (isSubType) {
+				
+				// check for @Id annotation
+				field = findAnnotatedField(Class.forName(subType), 'javax.persistence.Id')
+				
+				// check for id name/type entity params
+				if (field == null) {
+					field = findIdFromParams(ClassUtils.getShortCanonicalName(subType), keyValueArgs)
+				}
+				
+				// this is the default id name/type configuration
+				if (field == null) {
+					field = [name: 'id', type: 'Long']
+				}
+			}
+			
+			if (field) {
+				if (isSubType) {
+					fields.add([fieldName: "${StringUtils.uncapitalize(it.name.substring(3))}", fieldType: "${typeAsString}", fqFieldType: "${fqTypeAsString}", fieldId: [fieldName: field?.name, fieldType: field?.type], fieldList: getFields(Class.forName(subType), field?.name, fqClassName)])
+				} else {
+					fields.add([fieldName: "${StringUtils.uncapitalize(it.name.substring(3))}", fieldType: "${typeAsString}", fqFieldType: "${fqTypeAsString}", fieldId: [fieldName: field?.name, fieldType: field?.type]])
+				}
+			} else {
+				if (isSubType) {
+					fields.add([fieldName: "${StringUtils.uncapitalize(it.name.substring(3))}", fieldType: "${typeAsString}", fqFieldType: "${fqTypeAsString}", fieldId: [fieldName: field?.name, fieldType: field?.type], fieldList: getFields(Class.forName(subType), field?.name, fqClassName)])
+				} else {
+					fields.add([fieldName: "${StringUtils.uncapitalize(it.name.substring(3))}", fieldType: "${typeAsString}", fqFieldType: "${fqTypeAsString}"])
+				}
+			}
 		}
 	}
 	
@@ -354,9 +444,10 @@ def findIdFromParams(type, keyValueArgs) {
 }
 
 // TODO print the dao classes if required
-def showRunInfo(outputPackage, classForDao, superClassForDao, includeSuperFields, keyField, isAbstract, fields, osivDao) {
+def showRunInfo(outputPackage, classForDao, superClassForDao, includeSuperFields, keyField, isAbstract, fields, osivDao, useOrm, verboseOutput) {
 	println "Entity class: ${classForDao.name}${isAbstract ? ' (abstract)' : ''}${includeSuperFields && superClassForDao.name != 'java.lang.Object' ? ' (+' + superClassForDao.name + ')' : ''}"
 	println "Output package: ${outputPackage}"
+	println "Orm technology: ${useOrm}"
 	println "Entity key field: ${keyField}"
 	println ""
 	println "Attributes found: (* - key field)"
@@ -366,9 +457,11 @@ def showRunInfo(outputPackage, classForDao, superClassForDao, includeSuperFields
 		println "\t${field.fieldType} ${field.fieldName} ${props.join(' ')}" 
 	}
 	println ""
-	println "Generating code ${osivDao ? 'using osiv filter, see http://community.jboss.org/wiki/OpenSessioninView' : ''}"
-	println "\tinterface ${outputPackage}.${classForDao.simpleName}Dao"
-	println "\tclass ${outputPackage}.${classForDao.simpleName}DaoImpl"
+	print "Generating code ${osivDao ? 'using osiv filter, see http://community.jboss.org/wiki/OpenSessioninView' : ''}"
+	if (verboseOutput)
+		println ''
+	else 
+		print '...'
 }
 
 
@@ -377,14 +470,18 @@ def showUsage() {
 	println "\t-fq-class-name=<full qualified class name of the entity from which generate the Dao code>"
 	println "\t[-key-field-name=<key field of the entity>]"
 	println "\t[-output-package=<package of the generated dao code>]"
-	println "\t[-with-session]"
 	println "\t[-include-super-fields]"
 	println "\t[-osiv-dao]"
 	println "\t[-spring-dao]"
 	println "\t[-use-ehcache]"
-	println "\t[-generate-hibernate-cfg]"
+	println "\t[-use-db=<db name> select the specific db - default: mysql"
+	println "\t\tAvailable dbs: mysql, postgres"
+	println "\t[-generate-orm-cfg]"
 	println "\t[-generate-spring-cfg]"
 	println "\t[-generate-ehcache-cfg]"
 	println "\t[-generate-dao-base-classes]"
 	println "\t[-generate-osiv-filter] see http://community.jboss.org/wiki/OpenSessioninView"
+	println "\t[-use-orm=<orm technoly to use>] technology configuration - default: hibernate"
+	println "\t[-verbose] verbose output"
+	println "\tAvailable orms: hibernate, mybatis"
 }

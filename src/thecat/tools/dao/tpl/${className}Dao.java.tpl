@@ -1,7 +1,3 @@
-<#assign entityName=className?uncap_first>
-<#function getAttributeName methodName>
-	<#return methodName?substring(3, methodName?length)?uncap_first >
-</#function>
 package ${packageName};
 
 import java.util.List;

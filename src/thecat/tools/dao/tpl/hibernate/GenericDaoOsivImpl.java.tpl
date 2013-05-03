@@ -4,28 +4,23 @@ import java.io.Serializable;
 import java.util.List;
 
 import org.hibernate.Criteria;
-import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.Query;
 import org.hibernate.criterion.Order;
-import org.hibernate.criterion.Projections;
-import org.springframework.dao.support.DataAccessUtils;
-import org.springframework.orm.hibernate3.support.HibernateDaoSupport;
 
-<#list importList as import>
-import ${import};
-</#list>
-
-public class GenericDaoSpringImpl<T, PK extends Serializable> extends HibernateDaoSupport implements GenericDao<T, PK> {
+public class GenericDaoOsivImpl<T extends GenericPK<PK>, PK extends Serializable> extends Dao implements GenericDao<T, PK> {
 
 	private Class<T> persistentClass;
 	
-	public GenericDaoSpringImpl(final Class<T> persistentClass) {
+	public GenericDaoOsivImpl(final Class<T> persistentClass) {
 		this.persistentClass = persistentClass;
 	}
 	
 	@SuppressWarnings("unchecked")
 	private List<T> findAll(String orderBy, Boolean desc, int startRow, int pageSize) {
-		
-		DetachedCriteria criteria = DetachedCriteria.forClass(${className}.class);
+		Criteria criteria = getSession().createCriteria(persistentClass);
+			
+		if (startRow != -1) { criteria.setFirstResult(startRow); }
+		if (pageSize != -1) { criteria.setMaxResults(pageSize); } 
 			
 		if (orderBy != null) {
 			if (desc != null && desc) {
@@ -34,10 +29,10 @@ public class GenericDaoSpringImpl<T, PK extends Serializable> extends HibernateD
 				criteria.addOrder(Order.asc(orderBy));
 			}
 		}
-		
+			
 		criteria.setResultTransformer(Criteria.DISTINCT_ROOT_ENTITY);
-		
-		return getHibernateTemplate().findByCriteria(criteria, startRow, pageSize);
+			
+		return criteria.list();
 	}
 	
 	@Override
@@ -93,26 +88,24 @@ public class GenericDaoSpringImpl<T, PK extends Serializable> extends HibernateD
 			throw new IllegalArgumentException("The id parameter cannot be null");
 		}
 		
-		return (T) getHibernateTemplate().get(persistentClass, id);
+		return (T) getSession().get(persistentClass, id);
 	}
 	
 	@Override
 	public int countAll() {
-		DetachedCriteria criteria = DetachedCriteria.forClass(${className}.class);
-			
-		criteria.setResultTransformer(Criteria.DISTINCT_ROOT_ENTITY);
-		criteria.setProjection(Projections.rowCount());
-		return ((Long) DataAccessUtils.uniqueResult(getHibernateTemplate().findByCriteria(criteria))).intValue();
+		Query query = getSession().createQuery("select count(*) from " + persistentClass.getSimpleName());
+
+		return ((Long) query.uniqueResult()).intValue();
 	}
 
 	@Override
 	@SuppressWarnings("unchecked")
-	public T create(T entity) {		
+	public T create(T entity) {
 		if (entity == null) {
 			throw new IllegalArgumentException("The entity parameter cannot be null");
 		}
 		
-		return (T) getHibernateTemplate().save(entity);
+		return (T) getSession().save(entity);
 	}
 
 	@Override
@@ -121,7 +114,7 @@ public class GenericDaoSpringImpl<T, PK extends Serializable> extends HibernateD
 			throw new IllegalArgumentException("The entity parameter cannot be null");
 		}
 		
-		getHibernateTemplate().update(entity);
+		getSession().update(entity);
 	}
 	
 	@Override
@@ -130,7 +123,7 @@ public class GenericDaoSpringImpl<T, PK extends Serializable> extends HibernateD
 			throw new IllegalArgumentException("The entity parameter cannot be null");
 		}
 		
-		getHibernateTemplate().delete(entity);	
+		getSession().delete(entity);
 	}
 
 }

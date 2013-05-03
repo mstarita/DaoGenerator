@@ -1,19 +1,20 @@
 package thecat.model.businessobject;
 
 import java.io.Serializable;
+import java.util.List;
 
 import javax.persistence.Entity;
 import javax.persistence.Id;
 
 @Entity
-public class Person implements GenericPK<Long>, Serializable {
+public class PersonCollection implements GenericPK<Long>, Serializable {
 
 	private static final long serialVersionUID = 1L;
 
 	private Long id;
 	private String firstname;
 	private String lastname;
-	private String address;
+	private List<Address> addressList;
 
 	@Id
 	public Long getId() {
@@ -34,11 +35,12 @@ public class Person implements GenericPK<Long>, Serializable {
 	public void setLastname(String lastname) {
 		this.lastname = lastname;
 	}
-	public String getAddress() {
-		return address;
+	public List<Address> getAddressList() {
+		return addressList;
 	}
-	public void setAddress(String address) {
-		this.address = address;
+	public void setAddressList(List<Address> addressList) {
+		this.addressList = addressList;
 	}
+	
 	
 }
