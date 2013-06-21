@@ -61,7 +61,7 @@
 		</#list>
 	<#elseif !field.fqFieldType?starts_with("java.lang.") >
 		<#list field.fieldList as subField>
-			<#if fieldCount != 1>, </#if>${subField.fieldType}.${subField.fieldName} as ${entityName}_${subField.fieldType}_${subField.fieldName}
+			<#if fieldCount != 1>, </#if>${field.fieldType}.${subField.fieldName} as ${entityName}_${field.fieldType}_${subField.fieldName}
 			<#assign fieldCount = fieldCount + 1 />
 		</#list>
 	<#else>
@@ -105,7 +105,7 @@
 		</#list>
 	<#elseif !field.fqFieldType?starts_with("java.lang.") >
 		<#list field.fieldList as subField>
-			<#if fieldCount != 1>, </#if>${subField.fieldType}.${subField.fieldName} as ${entityName}_${subField.fieldType}_${subField.fieldName}
+			<#if fieldCount != 1>, </#if>${field.fieldType}.${subField.fieldName} as ${entityName}_${field.fieldType}_${subField.fieldName}
 			<#assign fieldCount = fieldCount + 1 />
 		</#list>
 	<#else>

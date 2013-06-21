@@ -6,7 +6,7 @@ import javax.persistence.Entity;
 import javax.persistence.Id;
 
 @Entity
-public class Address implements GenericPK<Long>, Serializable {
+public class Address implements Serializable {
 
 	private static final long serialVersionUID = 1L;
 
@@ -14,6 +14,12 @@ public class Address implements GenericPK<Long>, Serializable {
 	private String theAddress;
 	private PersonCollection personCollection;
 	
+	public PersonCollection getPersonCollection() {
+		return personCollection;
+	}
+	public void setPersonCollection(PersonCollection personCollection) {
+		this.personCollection = personCollection;
+	}
 	public Address() {}
 	public Address(Long id) {
 		this.id = id;
@@ -32,13 +38,6 @@ public class Address implements GenericPK<Long>, Serializable {
 	public void setTheAddress(String theAddress) {
 		this.theAddress = theAddress;
 	}
-	public PersonCollection getPersonCollection() {
-		return personCollection;
-	}
-	public void setPersonCollection(PersonCollection personCollection) {
-		this.personCollection = personCollection;
-	}
-	
 	@Override
 	public int hashCode() {
 		final int prime = 31;
@@ -65,7 +64,8 @@ public class Address implements GenericPK<Long>, Serializable {
 	@Override
 	public String toString() {
 		return "Address [id=" + id 
-				+ ", theAddress=" + theAddress + "]";
+			+ ", personsCollection=" + personCollection
+			+ ", theAddress=" + theAddress + "]";
 	}
 	
 	

@@ -183,7 +183,26 @@ def files4config = [
 				(generateEhcacheCfg 	? 'ehcache.xml.tpl' : '')]], 
 		'java-util': [ 
 			inputDir: 'tpl/mybatis', outputDir: "src/${binding.packageName.replaceAll('[.]', '/')}",
-			files: [(generateOsivFilter 	? 'MyBatisOsivFilter.java.tpl' : '') ]] ]]
+			files: [(generateOsivFilter 	? 'MyBatisOsivFilter.java.tpl' : '') ]] ],
+	'gsql' : [
+		'baseDao': [
+			inputDir: 'tpl', outputDir: "src/${binding.packageName.replaceAll('[.]', '/')}",
+			files: [
+				'gsql/Dao.groovy.tpl', 'GenericDao.java.tpl', 'GenericPK.java.tpl',
+				'GenericDaoExt.java.tpl']],
+		'entityDao': [
+			inputDir: 'tpl', outputDir: "src/${binding.packageName.replaceAll('[.]', '/')}",
+			files: ['${className}Dao.java.tpl', "gsql/\${className}Dao${binding['implementation']}Impl${StringUtils.capitalize(binding.useDb)}.groovy.tpl"]],
+		'config':  [
+			inputDir: 'tpl/gsql', outputDir: 'cfg',
+			files: [
+				(generateOrmCfg 		? "gsql-${binding.useDb}.properties.tpl" : '')]],
+		'web-util': [
+			inputDir: 'tpl/gsql', outputDir: "src/${binding.packageName.replaceAll('[.]', '/')}",
+			files: [(generateOsivFilter 	? 'GSqlOsivFilter.java.tpl' : '')]],
+		'java-util': [
+			inputDir: 'tpl/gsql', outputDir: "src/${binding.packageName.replaceAll('[.]', '/')}/util",
+			files: ['PropertyLoader.java.tpl' ]] ]]
 
 
 showRunInfo(
@@ -321,7 +340,7 @@ def freemark(inputString, binding) {
 def freemark(templateName, outputClassName, binding) {
 	def engine = new FreeMarkerTemplateEngine('')
 	
-	def templateUrl = getClass().getResource(templateName);
+	def templateUrl = getClass().getResource(templateName)
 	def templateText = templateUrl.getContent().getText()
 	String classText = engine.createTemplate(templateText).make(binding)
 	new File(outputClassName).setText(classText)
@@ -483,5 +502,5 @@ def showUsage() {
 	println "\t[-generate-osiv-filter] see http://community.jboss.org/wiki/OpenSessioninView"
 	println "\t[-use-orm=<orm technoly to use>] technology configuration - default: hibernate"
 	println "\t[-verbose] verbose output"
-	println "\tAvailable orms: hibernate, mybatis"
+	println "\tAvailable orms: hibernate, mybatis, gsql"
 }
