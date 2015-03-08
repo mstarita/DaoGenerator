@@ -1,31 +1,26 @@
 package thecat.tools.dao;
 
-import java.lang.reflect.Modifier;
+import org.codehaus.groovy.gfreemarker.FreeMarkerTemplateEngine;
 
-import org.codehaus.groovy.gfreemarker.FreeMarkerTemplateEngine
-import org.apache.commons.lang.ClassUtils
-import org.apache.commons.lang.StringUtils
-import org.apache.commons.lang.reflect.MethodUtils;
-import org.apache.commons.io.FileUtils
-import org.apache.commons.io.FilenameUtils
 
 def keyValueArgs = args.collect { def token = it.split('='); [key: token[0], value: token.length > 1 ? token[1] : null] }
 
 keyValueArgs.findAll { it.key in [
 	'-generate-dao-base-classes', '-osiv-dao', '-spring-dao', 
 	'-generate-spring-cfg', '-generate-ehcache-cfg', '-use-ehcache',
-	'-generate-osiv-filter', '-generate-orm-cfg', '-include-super-fields', 
+	'-generate-osiv-filter', '-generate-orm-cfg', '-include-super-fields',
+	'-generate-rest', '-generate-rest-swagger-ui',
 	'-verbose'] }.each { it.value = true }
 
 // check input parameters
 if (	(keyValueArgs.size() < 1) ||
-		(keyValueArgs.findAll { it.key in ['-fq-class-name'] }.size() != 1) || 
+		(keyValueArgs.findAll { it.key in ['-fq-class-name'] }.size() != 1) ||
 		(keyValueArgs.findAll { it.value == null }.size() > 0)) {
 	showUsage()
 	return
-} 
+}
 
-def fqClassName = keyValueArgs.find { it.key == '-fq-class-name'}.value
+def fqClassName = keyValueArgs.find { it.key == '-fq-class-name'}?.value
 def keyField = keyValueArgs.find { it.key == '-key-field-name'}?.value
 def outputPackage = keyValueArgs.find { it.key == '-output-package'}?.value
 def generateDaoBaseClass = keyValueArgs.find { it.key == '-generate-dao-base-classes'}?.value
@@ -41,7 +36,11 @@ def useOrm =  keyValueArgs.find { it.key == '-use-orm'}?.value ?: 'hibernate'
 def useDb =  keyValueArgs.find { it.key == '-use-db'}?.value ?: 'mysql'
 def verboseOutput   = keyValueArgs.find { it.key == '-verbose'}?.value
 def key = null
-
+def generateRest = keyValueArgs.find { it.key == '-generate-rest' }?.value ?: false
+def restFormat = keyValueArgs.find { it.key == '-use-rest-format' }?.value ?: 'json+xml'
+def generateSwaggerUi = keyValueArgs.find { it.key == '-generate-rest-swagger-ui' }?.value ?: false
+def appServerHost = keyValueArgs.find { it.key == '-host' }?.value ?: 'localhost'
+def appServerPort = keyValueArgs.find { it.key == '-port' }?.value ?: '8080'
 
 try {
 	if (keyField) {
@@ -56,6 +55,11 @@ try {
 
 if (!key) {
 	println "HUSTON, WE HAVE A PROBLEM!!! - Identity attribute/get method not found for the specifed class ${fqClassName}"
+	return
+}
+
+if (!(restFormat in ['json+xml', 'json', 'xml'])) {
+	println "HUSTON, WE HAVE A PROBLEM!!! Invalid rest format specified"
 	return
 }
 
@@ -79,13 +83,18 @@ try {
 	return
 }
 
+warName = keyValueArgs.find { it.key == '-war-name' }?.value ?: "${classForDao.simpleName}RestWS"
+
 def binding = ['packageName': outputPackage, 'className': classForDao.simpleName , 'fqClassName': fqClassName, 
 			   'entityName': StringUtils.uncapitalize(classForDao.simpleName),
                'fieldList': [], 'importList': [], 
 			   'keyField': key.fieldName, 'keyFieldType': key.fieldType, 
 			   'useEhcache': useEhcache,
                'isAbstract': Modifier.isAbstract(classForDao.modifiers),
-			   'implementation': '', 'useDb': useDb]
+			   'implementation': '', 'useDb': useDb,
+			   'generateRest': generateRest, 'restFormat': restFormat, 'generateSwaggerUi': generateSwaggerUi,
+			   'host': appServerHost, 'port': appServerPort, 'warName': warName
+			   ]
 
 // collect the fields name and type of classForDao
 getFields(classForDao, keyValueArgs, fqClassName).each { binding.fieldList.add(it) }
@@ -142,6 +151,7 @@ if (osivDao) {
 	binding.implementation = 'Spring'
 }
 
+// TODO use config slurper to externalize the config array
 def files4config = [
 	'hibernate' : [
 		'baseDao': [
@@ -160,7 +170,21 @@ def files4config = [
 				(generateEhcacheCfg 	? 'ehcache.xml.tpl' : '')]], 
 		'java-util': [ 
 			inputDir: 'tpl/hibernate', outputDir: "src/${binding.packageName.replaceAll('[.]', '/')}",
-			files: [(generateOsivFilter 	? 'HibernateOsivFilter.java.tpl' : '') ]], ],
+			files: [(generateOsivFilter 	? 'HibernateOsivFilter.java.tpl' : '') ]], 
+		'rest': [
+			inputDir: 'tpl/rest', outputDir: "src/${binding.packageName.replaceAll('[.]', '/')}",
+			files: [
+				(generateRest ? '${className}Application.java.tpl' : ''), 
+				(generateRest ? '${className}Service.java.tpl' : '')]],
+		'swagger-ui': [
+			inputDir: 'tpl/rest/swaggerui', outputDir: 'web',
+			files: [
+				(generateRest && generateSwaggerUi ? 'swaggerui.zip.unzipme' : ''),
+				(generateRest && generateSwaggerUi? 'index.html.tpl' : '')]],
+		'web':  [
+			inputDir: 'tpl/web', outputDir: 'cfg',
+			files: [
+				(generateRest ? 'web.xml.tpl' : '')]] ],
 	'mybatis' : [
 		'baseDao': [
 			inputDir: 'tpl', outputDir: "src/${binding.packageName.replaceAll('[.]', '/')}",
@@ -183,7 +207,21 @@ def files4config = [
 				(generateEhcacheCfg 	? 'ehcache.xml.tpl' : '')]], 
 		'java-util': [ 
 			inputDir: 'tpl/mybatis', outputDir: "src/${binding.packageName.replaceAll('[.]', '/')}",
-			files: [(generateOsivFilter 	? 'MyBatisOsivFilter.java.tpl' : '') ]] ],
+			files: [(generateOsivFilter 	? 'MyBatisOsivFilter.java.tpl' : '') ]],
+		'rest': [
+			inputDir: 'tpl/rest', outputDir: "src/${binding.packageName.replaceAll('[.]', '/')}",
+			files: [
+				(generateRest ? '${className}Application.java.tpl' : ''), 
+				(generateRest ? '${className}Service.java.tpl' : '')]],
+		'swagger-ui': [
+			inputDir: 'tpl/rest/swaggerui', outputDir: 'web',
+			files: [
+				(generateRest && generateSwaggerUi ? 'swaggerui.zip.unzipme' : ''),
+				(generateRest && generateSwaggerUi? 'index.html.tpl' : '')]],
+		'web':  [
+			inputDir: 'tpl/web', outputDir: 'cfg',
+			files: [
+				(generateRest ? 'web.xml.tpl' : '')]]  ],
 	'gsql' : [
 		'baseDao': [
 			inputDir: 'tpl', outputDir: "src/${binding.packageName.replaceAll('[.]', '/')}",
@@ -202,14 +240,31 @@ def files4config = [
 			files: [(generateOsivFilter 	? 'GSqlOsivFilter.java.tpl' : '')]],
 		'java-util': [
 			inputDir: 'tpl/gsql', outputDir: "src/${binding.packageName.replaceAll('[.]', '/')}/util",
-			files: ['PropertyLoader.java.tpl' ]] ]]
+			files: ['PropertyLoader.java.tpl' ]],
+		'rest': [
+			inputDir: 'tpl/rest', outputDir: "src/${binding.packageName.replaceAll('[.]', '/')}",
+			files: [
+				(generateRest ? '${className}Application.java.tpl' : ''), 
+				(generateRest ? '${className}Service.java.tpl' : '')]],
+		'swagger-ui': [
+			inputDir: 'tpl/rest/swaggerui', outputDir: 'web',
+			files: [
+				(generateRest && generateSwaggerUi ? 'swaggerui.zip.unzipme' : ''),
+				(generateRest && generateSwaggerUi? 'index.html.tpl' : '')]],
+		'web':  [
+			inputDir: 'tpl/web', outputDir: 'cfg',
+			files: [
+				(generateRest ? 'web.xml.tpl' : '')]] ]]
 
 
 showRunInfo(
 	outputPackage, classForDao, superClassForDao, 
 	includeSuperFields, key.fieldName, 
 	binding.isAbstract, binding.fieldList, 
-	osivDao, useOrm, verboseOutput)
+	osivDao, useOrm, 
+	generateRest, restFormat, generateSwaggerUi, 
+	appServerHost, appServerPort, warName,
+	verboseOutput)
 
 // setup config files
 def files = null
@@ -226,6 +281,7 @@ if (!files) {
 	System.exit 0
 }
 
+// TODO unpack .zip files with extension .zip.unzipme
 files.each { section ->
 	def inputDir = section.value.inputDir
 	def baseOutputDir = "output-${useOrm}"
@@ -251,6 +307,22 @@ files.each { section ->
 				
 				FileUtils.copyURLToFile getClass().getResource(inputFile),
 					new File("${baseOutputDir}/${outputDir}/${outputFile}")
+				
+				if (inputFile.endsWith('.zip.unzipme')) {
+					
+					try {
+						def ant = new AntBuilder()
+						ant.unzip( 
+							src: "${baseOutputDir}/${outputDir}/${outputFile}", 
+							dest: "${baseOutputDir}/${outputDir}", 
+							overwrite: true)
+						
+						FileUtils.deleteQuietly new File("${baseOutputDir}/${outputDir}/${outputFile}")
+					} catch (Exception ex) {
+						if (verboseOutput) println "unzip failed!!!"
+						ex.printStackTrace()
+					}
+				}
 			}
 		}
 	}
@@ -463,10 +535,21 @@ def findIdFromParams(type, keyValueArgs) {
 }
 
 // TODO print the dao classes if required
-def showRunInfo(outputPackage, classForDao, superClassForDao, includeSuperFields, keyField, isAbstract, fields, osivDao, useOrm, verboseOutput) {
+def showRunInfo(outputPackage, 
+	classForDao, superClassForDao, includeSuperFields, keyField, isAbstract, fields, 
+	osivDao, useOrm, generateRest, restFormat, generateSwaggerUi, 
+	appServerHost, appServerPort, warName,
+	verboseOutput) {
+	
 	println "Entity class: ${classForDao.name}${isAbstract ? ' (abstract)' : ''}${includeSuperFields && superClassForDao.name != 'java.lang.Object' ? ' (+' + superClassForDao.name + ')' : ''}"
 	println "Output package: ${outputPackage}"
 	println "Orm technology: ${useOrm}"
+	println "Generate rest service [RestEasy]: ${generateRest ? 'yes' : 'no'}"
+	if (generateRest) {
+		println "Rest service format: ${restFormat}"
+		println "Generate Swagger UI: ${generateSwaggerUi ? 'yes' : 'no'}"
+		println "Deploy on: http://${appServerHost}:${appServerPort}/${warName}"
+	}
 	println "Entity key field: ${keyField}"
 	println ""
 	println "Attributes found: (* - key field)"
@@ -475,8 +558,8 @@ def showRunInfo(outputPackage, classForDao, superClassForDao, includeSuperFields
 		if (field.fieldName == keyField) props.add('(*)')
 		println "\t${field.fieldType} ${field.fieldName} ${props.join(' ')}" 
 	}
-	println ""
 	print "Generating code ${osivDao ? 'using osiv filter, see http://community.jboss.org/wiki/OpenSessioninView' : ''}"
+	println ""
 	if (verboseOutput)
 		println ''
 	else 
@@ -485,22 +568,31 @@ def showRunInfo(outputPackage, classForDao, superClassForDao, includeSuperFields
 
 
 def showUsage() {
-	println "Please specify the following parameters:"
-	println "\t-fq-class-name=<full qualified class name of the entity from which generate the Dao code>"
-	println "\t[-key-field-name=<key field of the entity>]"
-	println "\t[-output-package=<package of the generated dao code>]"
-	println "\t[-include-super-fields]"
-	println "\t[-osiv-dao]"
-	println "\t[-spring-dao]"
-	println "\t[-use-ehcache]"
-	println "\t[-use-db=<db name> select the specific db - default: mysql"
-	println "\t\tAvailable dbs: mysql, postgres"
-	println "\t[-generate-orm-cfg]"
-	println "\t[-generate-spring-cfg]"
-	println "\t[-generate-ehcache-cfg]"
-	println "\t[-generate-dao-base-classes]"
-	println "\t[-generate-osiv-filter] see http://community.jboss.org/wiki/OpenSessioninView"
-	println "\t[-use-orm=<orm technoly to use>] technology configuration - default: hibernate"
-	println "\t[-verbose] verbose output"
-	println "\tAvailable orms: hibernate, mybatis, gsql"
+	println """
+Please specify the following parameters:
+\t-fq-class-name=<full qualified class name of the entity from which generate the Dao code>
+\t[-key-field-name=<key field of the entity>]
+\t[-output-package=<package of the generated dao code>]
+\t[-include-super-fields]
+\t[-osiv-dao]
+\t[-spring-dao]
+\t[-use-ehcache]
+\t[-use-db=<db name> select the specific db - default: mysql
+\t\tAvailable dbs: mysql, postgres
+\t[-generate-orm-cfg]
+\t[-generate-spring-cfg]
+\t[-generate-ehcache-cfg]
+\t[-generate-dao-base-classes]
+\t[-generate-osiv-filter] see http://community.jboss.org/wiki/OpenSessioninView
+\t[-use-orm=<orm technoly to use>] technology configuration - default: hibernate
+\t[-verbose] verbose output
+\t\tAvailable orms: hibernate, mybatis, gsql
+\t[-generate-rest] generate rest ws
+\t[-use-rest-format=<data format>] default json+xml
+\t\tAvailable format: json, xml, json+xml
+\t[-generate-rest-swagger-ui]
+\t[-host=<host name or ip>] deploy app server hostname - default localhost
+\t[-port=<host port>] deploy app server port - default 8080
+\t[-war-name=<name of war>] default <class-name>RestWs
+"""
 }
